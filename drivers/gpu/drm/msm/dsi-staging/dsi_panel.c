@@ -735,11 +735,11 @@ static int dsi_panel_power_off(struct dsi_panel *panel)
 	return rc;
 }
 
-extern int __dsi_panel_tx_cmd_set(struct dsi_panel *panel,
-				enum dsi_cmd_set_type type,
-				bool wait)
+int dsi_panel_tx_cmd_set(struct dsi_panel *panel,
+				enum dsi_cmd_set_type type)
 {
-	int rc = 0, i = 0;
+	int rc = 0, i = 0, wait_multi = 1000;
+	bool wait = true;
 	ssize_t len;
 	struct dsi_cmd_desc *cmds;
 	u32 count;
@@ -775,19 +775,25 @@ extern int __dsi_panel_tx_cmd_set(struct dsi_panel *panel,
 			pr_debug("failed to set cmds(%d), rc=%d\n", type, rc);
 			goto error;
 		}
-		if (wait && cmds->post_wait_ms)
-			usleep_range(cmds->post_wait_ms*1000,
-					((cmds->post_wait_ms*1000)+10));
+
+		//Custom FOD logic below:
+		if (type == DSI_CMD_LOADING_EFFECT_ON || type == DSI_CMD_LOADING_EFFECT_OFF)
+			wait = false;
+
+		if ((panel->hw_type == DSI_PANEL_SAMSUNG_SOFEF03F_M) &&
+			((type == DSI_CMD_SET_HBM_ON_5)
+			|| (type == DSI_CMD_SET_HBM_OFF)
+			|| (type == DSI_CMD_AOD_OFF_HBM_ON_SETTING)
+			|| (type == DSI_CMD_SET_AOD_ON_5)))
+			wait_multi = 725;
+
+		if (cmds->post_wait_ms && wait)
+			usleep_range(cmds->post_wait_ms*wait_multi,
+					((cmds->post_wait_ms*wait_multi)+10));
 		cmds++;
 	}
 error:
 	return rc;
-}
-
-int dsi_panel_tx_cmd_set(struct dsi_panel *panel,
-				enum dsi_cmd_set_type type)
-{
-	return __dsi_panel_tx_cmd_set(panel, type, true);
 }
 
 static int dsi_panel_pinctrl_deinit(struct dsi_panel *panel)
@@ -963,16 +969,12 @@ static void set_hbm_mode(struct work_struct *work)
 	struct dsi_panel *panel = get_main_display()->panel;
 	int level = hbm_level;
 
-	/*
-	 * Bypass the command post delay by calling __dsi_panel_tx_cmd_set().
-	 * Out-of-sync FOD is less noticeable this way.
-	 */
-
 	mutex_lock(&panel->panel_lock);
 	switch (level) {
 	case 0:
 		if (!HBM_flag) {
-			__dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_HBM_OFF, false);
+			dsi_panel_tx_cmd_set(panel, DSI_CMD_LOADING_EFFECT_OFF);
+			dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_HBM_OFF);
 			pr_debug(
 				"When HBM OFF -->hbm_backight = %d panel->bl_config.bl_level =%d\n",
 				panel->hbm_backlight, panel->bl_config.bl_level);
@@ -980,7 +982,10 @@ static void set_hbm_mode(struct work_struct *work)
 		}
 		break;
 	case 1:
-		__dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_HBM_ON_5, false);
+		if (HBM_flag) {
+			dsi_panel_tx_cmd_set(panel, DSI_CMD_LOADING_EFFECT_ON);
+			dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_HBM_ON_5);
+		}
 		break;
 	}
 	mutex_unlock(&panel->panel_lock);
@@ -5214,7 +5219,6 @@ bool aod_complete;
 bool real_aod_mode;
 extern bool oneplus_dimlayer_hbm_enable;
 bool backup_dimlayer_hbm = false;
-extern int oneplus_auth_status;
 extern int oneplus_dim_status;
 int backup_dim_status = 0;
 int dsi_panel_enable(struct dsi_panel *panel)
@@ -5249,12 +5253,18 @@ int dsi_panel_enable(struct dsi_panel *panel)
 	}
 	panel->need_power_on_backlight = true;
 
-	if (panel->hw_type == DSI_PANEL_SAMSUNG_S6E3HC2 && (gamma_read_flag == GAMMA_READ_SUCCESS)) {
+	if (gamma_read_flag == GAMMA_READ_SUCCESS) {
 		if (mode_fps == 60) {
 			rc = dsi_panel_tx_gamma_cmd_set(panel, DSI_GAMMA_CMD_SET_SWITCH_60HZ);
 			pr_debug("Send DSI_GAMMA_CMD_SET_SWITCH_60HZ cmds\n");
 			if (rc)
 				pr_debug("[%s] Failed to send DSI_GAMMA_CMD_SET_SWITCH_60HZ cmds, rc=%d\n",
+					panel->name, rc);
+		} else if (mode_fps == 90) {
+			rc = dsi_panel_tx_gamma_cmd_set(panel, DSI_GAMMA_CMD_SET_SWITCH_90HZ);
+			pr_debug("Send DSI_GAMMA_CMD_SET_SWITCH_90HZ cmds\n");
+			if (rc)
+				pr_debug("[%s] Failed to send DSI_GAMMA_CMD_SET_SWITCH_90HZ cmds, rc=%d\n",
 					panel->name, rc);
 		}
 	}
@@ -5262,19 +5272,6 @@ int dsi_panel_enable(struct dsi_panel *panel)
 	panel->panel_initialized = true;
 	oneplus_panel_status = 2; // DISPLAY_POWER_ON
 	pr_debug("dsi_panel_enable aod_mode =%d\n",panel->aod_mode);
-
-	if (oneplus_auth_status == 2) {
-		backup_dimlayer_hbm = 0;
-		backup_dim_status = 0;
-	} else if (oneplus_auth_status == 1) {
-		backup_dimlayer_hbm = 1;
-		backup_dim_status = 1;
-	}
-	oneplus_dimlayer_hbm_enable = backup_dimlayer_hbm;
-	oneplus_dim_status = backup_dim_status;
-	if (oneplus_auth_status != 2)
-		pr_err("Restore dim when panel goes on");
-	oneplus_auth_status = 0;
 
 	blank = MSM_DRM_BLANK_UNBLANK_CHARGE;
 	notifier_data.data = &blank;
@@ -5480,13 +5477,13 @@ int dsi_panel_set_hbm_mode(struct dsi_panel *panel, int level)
 			if (!count) {
 				pr_debug("This panel does not support HBM mode off.\n");
 				goto error;
-			}
-			else {
+			} else {
 				HBM_flag = false;
 				rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_HBM_OFF);
+				dsi_panel_tx_cmd_set(panel, DSI_CMD_LOADING_EFFECT_OFF);
 				pr_debug("Send DSI_CMD_SET_HBM_OFF cmds.\n");
 				pr_debug("hbm_backight = %d, panel->bl_config.bl_level = %d\n",panel->hbm_backlight, panel->bl_config.bl_level);
-				rc= dsi_panel_update_backlight(panel,panel->hbm_backlight);
+				rc = dsi_panel_update_backlight(panel,panel->hbm_backlight);
 			}
 			break;
 
@@ -5546,8 +5543,8 @@ int dsi_panel_set_hbm_mode(struct dsi_panel *panel, int level)
 			}
 			else {
 				HBM_flag = true;
-				//ensure we also skip wait here for 7T so fod is less apparent
-				__dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_HBM_ON_5, false);
+				dsi_panel_tx_cmd_set(panel, DSI_CMD_LOADING_EFFECT_ON);
+				dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_HBM_ON_5);
 				pr_debug("Send DSI_CMD_SET_HBM_ON_5 cmds.\n");
 			}
 			break;
@@ -6148,6 +6145,7 @@ int dsi_panel_tx_gamma_cmd_set(struct dsi_panel *panel,
 			pr_debug("failed to set cmds(%d), rc=%d\n", type, rc);
 			goto error;
 		}
+
 		if (cmds->post_wait_ms)
 			usleep_range(cmds->post_wait_ms*1000,
 					((cmds->post_wait_ms*1000)+10));

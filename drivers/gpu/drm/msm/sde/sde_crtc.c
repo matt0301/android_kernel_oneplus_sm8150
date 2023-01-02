@@ -3523,7 +3523,7 @@ extern int oneplus_panel_status;
 extern int backup_dim_status;
 extern bool backup_dimlayer_hbm;
 extern bool HBM_flag;
-extern int dsi_panel_tx_cmd_set(struct dsi_panel *panel, enum dsi_cmd_set_type type);
+extern int dsi_panel_tx_cmd_set (struct dsi_panel *panel, enum dsi_cmd_set_type type);
 int oneplus_dim_status = 0;
 int oneplus_aod_fod = 0;
 int oneplus_aod_dc = 0;
@@ -3555,8 +3555,10 @@ ssize_t oneplus_display_notify_dim(struct device *dev,
 	dsi_connector = dsi_display->drm_conn;
 	mode_config = &drm_dev->mode_config;
 	sscanf(buf, "%du", &dim_status);
-	if (oneplus_panel_status == 0)
+	if (oneplus_panel_status == 0) {
 		dim_status = 0;
+		HBM_flag = 0;
+	}
 
 	if (dsi_display->panel->aod_status == 0 && (dim_status == 2)) {
 		pr_debug("fp set it in normal status\n");
@@ -5719,7 +5721,7 @@ static int _sde_crtc_check_secure_state(struct drm_crtc *crtc,
 	return 0;
 }
 
-int op_dimlayer_bl_alpha = 460;
+int op_dimlayer_bl_alpha = 320;
 int op_dimlayer_bl_enabled = 0;
 int op_dimlayer_bl_enable_real = 0;
 int op_dimlayer_bl = 0;

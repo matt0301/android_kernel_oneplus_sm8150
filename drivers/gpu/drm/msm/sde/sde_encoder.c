@@ -2334,11 +2334,20 @@ static int sde_encoder_resource_control(struct drm_encoder *drm_enc,
 
 	switch (sw_event) {
 	case SDE_ENC_RC_EVENT_KICKOFF:
+	{
+		struct msm_drm_private *priv;
+		struct sde_kms *sde_kms;
+
+		priv = drm_enc->dev->dev_private;
+		sde_kms = to_sde_kms(priv->kms);
+
 		/* cancel delayed off work, if any */
 		if (kthread_cancel_delayed_work_sync(
 				&sde_enc->delayed_off_work))
 			SDE_DEBUG_ENC(sde_enc, "sw_event:%d, work cancelled\n",
 					sw_event);
+
+		msm_idle_set_state(drm_enc, true);
 
 		mutex_lock(&sde_enc->rc_lock);
 
@@ -2362,6 +2371,7 @@ static int sde_encoder_resource_control(struct drm_encoder *drm_enc,
 
 		if (is_vid_mode && sde_enc->rc_state == SDE_ENC_RC_STATE_IDLE) {
 			_sde_encoder_irq_control(drm_enc, true);
+			sde_kms_update_pm_qos_irq_request(sde_kms, true, false);
 		} else {
 			/* enable all the clks and resources */
 			ret = _sde_encoder_resource_control_helper(drm_enc,
@@ -2386,7 +2396,7 @@ static int sde_encoder_resource_control(struct drm_encoder *drm_enc,
 
 		mutex_unlock(&sde_enc->rc_lock);
 		break;
-
+	}
 	case SDE_ENC_RC_EVENT_FRAME_DONE:
 		if (!sde_enc->crtc) {
 			SDE_ERROR("invalid crtc, sw_event:%u\n", sw_event);
@@ -2442,6 +2452,8 @@ static int sde_encoder_resource_control(struct drm_encoder *drm_enc,
 			idle_pc_duration = IDLE_SHORT_TIMEOUT;
 		else
 			idle_pc_duration = IDLE_POWERCOLLAPSE_DURATION;
+
+		msm_idle_set_state(drm_enc, false);
 
 		if (!autorefresh_enabled)
 			kthread_mod_delayed_work(
@@ -2627,6 +2639,13 @@ static int sde_encoder_resource_control(struct drm_encoder *drm_enc,
 		break;
 
 	case SDE_ENC_RC_EVENT_ENTER_IDLE:
+	{
+		struct msm_drm_private *priv;
+		struct sde_kms *sde_kms;
+
+		priv = drm_enc->dev->dev_private;
+		sde_kms = to_sde_kms(priv->kms);
+
 		mutex_lock(&sde_enc->rc_lock);
 
 		if (sde_enc->rc_state != SDE_ENC_RC_STATE_ON) {
@@ -2647,6 +2666,7 @@ static int sde_encoder_resource_control(struct drm_encoder *drm_enc,
 
 		if (is_vid_mode) {
 			_sde_encoder_irq_control(drm_enc, false);
+			sde_kms_update_pm_qos_irq_request(sde_kms, false, false);
 		} else {
 			/* disable all the clks and resources */
 			_sde_encoder_resource_control_rsc_update(drm_enc,
@@ -2660,6 +2680,7 @@ static int sde_encoder_resource_control(struct drm_encoder *drm_enc,
 
 		mutex_unlock(&sde_enc->rc_lock);
 		break;
+	}
 	case SDE_ENC_RC_EVENT_EARLY_WAKEUP:
 		if (!sde_enc->crtc ||
 			sde_enc->crtc->index >= ARRAY_SIZE(priv->disp_thread)) {
