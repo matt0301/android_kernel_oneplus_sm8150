@@ -41,6 +41,55 @@
 			qcom,mdss-dsi-te-dcs-command = <1>;
 			qcom,mdss-dsi-bl-min-level = <6>;
 			qcom,mdss-dsi-bl-max-level = <1023>;
+			qcom,fod-dim-lut = <
+                	/* brightness, alpha */
+				0 235
+				9 224
+				20 215
+				30 209
+				40 200
+				50 194
+				60 189
+				70 184
+				80 180
+				90 177
+				100 172
+				110 169
+				120 165
+				150 158
+				180 150
+				200 147
+				250 137
+				300 127
+				400 110
+				500 94
+				600 80
+				700 67
+				800 56
+				900 44
+				1023 31
+                	>;
+			qcom,dc-dim-lut = <
+                        /* brightness, alpha */
+                                0 255
+                                1 224
+                                2 213
+                                3 211
+                                4 208
+                                5 206
+                                6 203
+                                8 200
+                                10 196
+                                15 186
+                                20 176
+                                30 160
+                                45 139
+                                70 114
+                                100 90
+                                150 56
+                                227 14
+                                260 0
+                >;
 			qcom,mdss-brightness-default-val = <160>;
 			qcom,mdss-brightness-max-level = <1023>;
 			qcom,mdss-pan-physical-width-dimension = <68>;
