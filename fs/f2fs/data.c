@@ -501,8 +501,8 @@ static bool f2fs_crypt_mergeable_bio(struct bio *bio, const struct inode *inode,
 	return fscrypt_mergeable_bio(bio, inode, next_idx);
 }
 
-static inline void __submit_bio(struct f2fs_sb_info *sbi,
-				struct bio *bio, enum page_type type)
+inline void __submit_bio(struct f2fs_sb_info *sbi,
+			 struct bio *bio, enum page_type type)
 {
 	if (!is_read_io(bio_op(bio))) {
 		unsigned int start;
@@ -4349,7 +4349,7 @@ int f2fs_init_post_read_wq(struct f2fs_sb_info *sbi)
 		return 0;
 
 	sbi->post_read_wq = alloc_workqueue("f2fs_post_read_wq",
-						 WQ_UNBOUND | WQ_HIGHPRI,
+						 WQ_HIGHPRI,
 						 num_online_cpus());
 	if (!sbi->post_read_wq)
 		return -ENOMEM;

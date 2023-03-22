@@ -72,22 +72,7 @@
                 /* brightness, alpha */
                                 0 255
                                 1 224
-                                2 213
-                                3 211
-                                4 208
-                                5 206
-                                6 203
-                                8 200
-                                10 196
-                                15 186
-                                20 176
-                                30 160
-                                45 139
-                                70 114
-                                100 90
-                                150 56
-                                227 14
-                                260 0
+                                1023 0
                 >;
 		qcom,mdss-pan-physical-width-dimension = <71>;
 		qcom,mdss-pan-physical-height-dimension = <154>;
@@ -441,7 +426,7 @@
 				15 00 00 00 00 00 02 B5 93				/* 0x93 : ELVSS DIM OFF */
 				29 00 00 00 00 00 03 F0 A5 A5
 				/* HBM Mode Setting */
-				29 00 00 08 00 00 03 F0 5A 5A			/* Level2 key Access */
+				29 00 00 00 00 00 03 F0 5A 5A			/* Level2 key Access */
 				15 00 00 00 00 00 02 C7 27				/* HMB setting */
 				15 00 00 00 00 00 02 B0 34
 				15 00 00 00 00 00 02 B1 4B
