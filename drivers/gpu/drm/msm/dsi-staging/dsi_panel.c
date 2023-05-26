@@ -877,7 +877,6 @@ static int dsi_panel_update_backlight(struct dsi_panel *panel,
 	u32 bl_lvl)
 {
 	int rc = 0;
-	u32 count;
 	struct mipi_dsi_device *dsi;
 	struct dsi_display_mode *mode;
 
@@ -889,8 +888,7 @@ static int dsi_panel_update_backlight(struct dsi_panel *panel,
 	dsi = &panel->mipi_device;
 	mode = panel->cur_mode;
 
-
-	if (panel->is_hbm_enabled)
+	if (panel->is_hbm_enabled || HBM_flag == true)
 		return 0;
 
 	saved_backlight = bl_lvl;
@@ -899,29 +897,12 @@ static int dsi_panel_update_backlight(struct dsi_panel *panel,
 		bl_lvl = 1023;
 
 	if (panel->bl_config.bl_high2bit) {
-		if (HBM_flag == true)
-			return 0;
-
 		if (cur_backlight == bl_lvl && (mode_fps != cur_fps ||
 				 cur_h != panel->cur_mode->timing.h_active)) {
 			cur_fps = mode_fps;
 			cur_h = panel->cur_mode->timing.h_active;
 			return 0;
 		}
-
-		if (hbm_brightness_flag == 1) {
-			count = mode->priv_info->cmd_sets[DSI_CMD_SET_HBM_BRIGHTNESS_OFF].count;
-			if (!count) {
-				pr_debug("This panel does not support HBM brightness off mode.\n");
-				return rc;
-			}
-			else {
-				rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_HBM_BRIGHTNESS_OFF);
-				pr_debug("Send DSI_CMD_SET_HBM_BRIGHTNESS_OFF cmds.\n");
-				hbm_brightness_flag = 0;
-			}
-		}
-
 		rc = mipi_dsi_dcs_set_display_brightness_samsung(dsi, bl_lvl);
 		pr_debug("backlight = %d\n", bl_lvl);
 		cur_backlight = bl_lvl;
@@ -1042,10 +1023,20 @@ error:
 u8 dsi_panel_get_fod_dim_alpha(struct dsi_panel *panel)
 {
 	u8 alpha;
+	u8 fodalpha;
+	u8 dcalpha;
 
 	mutex_lock(&panel->panel_lock);
-	alpha = panel->fod_dim_alpha - panel->dc_dim_alpha;
+	fodalpha = panel->fod_dim_alpha;
+	dcalpha = panel->dc_dim_alpha;
 	mutex_unlock(&panel->panel_lock);
+
+	if (fodalpha < 210 && dcalpha > 0)
+		dcalpha = 285 - dcalpha;
+	else if (fodalpha >= 210 && dcalpha > 0)
+		dcalpha = 255 - dcalpha;
+
+	alpha = fodalpha + dcalpha;
 
 	return alpha;
 }
@@ -5172,10 +5163,18 @@ int dsi_panel_set_lp2(struct dsi_panel *panel)
 	if (!panel->panel_initialized)
 		goto exit;
 
+	//It has been observed entering lp2 without first entering lp1 on doze.
+	//In this case regulator stays in NORMAL mode, which is a power regression.
+	if (dsi_panel_is_type_oled(panel) &&
+	    panel->power_mode != SDE_MODE_DPMS_LP1)
+		dsi_pwr_panel_regulator_mode_set(&panel->power_info,
+			"ibb", REGULATOR_MODE_IDLE);
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_LP2);
 	if (rc)
 		pr_debug("[%s] failed to send DSI_CMD_SET_LP2 cmd, rc=%d\n",
 		       panel->name, rc);
+
+	panel->need_power_on_backlight = true;
 exit:
 	mutex_unlock(&panel->panel_lock);
 	return rc;
@@ -5790,7 +5789,6 @@ int dsi_panel_set_hbm_mode(struct dsi_panel *panel, int level)
 			return -EINVAL;
 		}
 
-		mutex_lock(&panel->panel_lock);
 		mode = panel->cur_mode;
 
 		switch (level) {
@@ -5809,55 +5807,7 @@ int dsi_panel_set_hbm_mode(struct dsi_panel *panel, int level)
 			}
 			break;
 
-		case 1:
-			count = mode->priv_info->cmd_sets[DSI_CMD_SET_HBM_ON_1].count;
-			if (!count) {
-				pr_debug("This panel does not support HBM mode 1.\n");
-				goto error;
-			}
-			else {
-				rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_HBM_ON_1);
-				pr_debug("Send DSI_CMD_SET_HBM_ON_1 cmds.\n");
-			}
-			break;
-
-		case 2:
-			count = mode->priv_info->cmd_sets[DSI_CMD_SET_HBM_ON_2].count;
-			if (!count) {
-				pr_debug("This panel does not support HBM mode 2.\n");
-				goto error;
-			}
-			else {
-				rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_HBM_ON_2);
-				pr_debug("Send DSI_CMD_SET_HBM_ON_2 cmds.\n");
-			}
-			break;
-
-		case 3:
-			count = mode->priv_info->cmd_sets[DSI_CMD_SET_HBM_ON_3].count;
-			if (!count) {
-				pr_debug("This panel does not support HBM mode 3.\n");
-				goto error;
-			}
-			else {
-				rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_HBM_ON_3);
-				pr_debug("Send DSI_CMD_SET_HBM_ON_3 cmds.\n");
-			}
-			break;
-
-		case 4:
-			count = mode->priv_info->cmd_sets[DSI_CMD_SET_HBM_ON_4].count;
-			if (!count) {
-				pr_debug("This panel does not support HBM mode 4.\n");
-				goto error;
-			}
-			else {
-				rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_HBM_ON_4);
-				pr_debug("Send DSI_CMD_SET_HBM_ON_4 cmds.\n");
-			}
-			break;
-
-		case 5:
+		default:
 			count = mode->priv_info->cmd_sets[DSI_CMD_SET_HBM_ON_5].count;
 			if (!count) {
 				pr_debug("This panel does not support HBM mode 5.\n");
@@ -5870,9 +5820,6 @@ int dsi_panel_set_hbm_mode(struct dsi_panel *panel, int level)
 				pr_debug("Send DSI_CMD_SET_HBM_ON_5 cmds.\n");
 			}
 			break;
-
-		default:
-			break;
 		}
 
 		pr_debug("Set HBM Mode = %d\n", level);
@@ -5881,7 +5828,6 @@ int dsi_panel_set_hbm_mode(struct dsi_panel *panel, int level)
 		}
 
 	error:
-		mutex_unlock(&panel->panel_lock);
 		return rc;
 	}
 

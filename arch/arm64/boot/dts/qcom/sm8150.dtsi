@@ -557,7 +557,7 @@
 	};
 
 	chosen {
-		bootargs = "rcupdate.rcu_expedited=1 rcu_nocbs=0-3 cgroup.memory=nokmem,nosocket kpti=off noirqdebug cgroup_disable=pressure nosoftlockup mce=ignore_ce noirqdebug";
+		bootargs = "rcupdate.rcu_expedited=1 rcu_nocbs=0-3 cgroup.memory=nokmem,nosocket kpti=off noirqdebug cgroup_disable=pressure noirqdebug";
 		rng-seed = <0x12345678>;
 	};
 
@@ -775,7 +775,7 @@
 			alloc-ranges = <0x0 0x00000000 0x0 0xffffffff>;
 			reusable;
 			alignment = <0x0 0x400000>;
-			size = <0x0 0x8000000>;
+			size = <0x0 0x2800000>;
 			linux,cma-default;
 		};
 	};
@@ -2462,8 +2462,8 @@
 		"MAX";
 
 		/* PM QoS */
-		qcom,pm-qos-cpu-groups = <0x01 0x02 0x04 0x08 0x10 0x20 0x40 0x80>;
-		qcom,pm-qos-cpu-group-latency-us = <44 44 44 44 44 44 44 44>;
+		qcom,pm-qos-cpu-groups = <0x0f 0xf0>;
+		qcom,pm-qos-cpu-group-latency-us = <44 44>;
 		qcom,pm-qos-default-cpu = <0>;
 
 		pinctrl-names = "dev-reset-assert", "dev-reset-deassert";

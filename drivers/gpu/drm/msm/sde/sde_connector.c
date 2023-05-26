@@ -20,6 +20,7 @@
 #include <linux/backlight.h>
 #include <linux/string.h>
 #include <linux/devfreq_boost.h>
+#include <linux/msm_drm_notify.h>
 #include "dsi_drm.h"
 #include "dsi_display.h"
 #include "sde_crtc.h"
@@ -97,6 +98,11 @@ static int sde_backlight_device_update_status(struct backlight_device *bd)
 
 	if (!bl_lvl && brightness)
 		bl_lvl = 1;
+
+	//Hack because 1024-2047 has different issues on different devices
+	//Only 7T is capable of using this range, however we manual set HBM
+	if (bl_lvl > 1023)
+		bl_lvl = 2047;
 
 	if (!c_conn->allow_bl_update) {
 		c_conn->unset_bl_level = bl_lvl;
@@ -642,9 +648,13 @@ struct dsi_panel *sde_connector_panel(struct sde_connector *c_conn)
 	return display ? display->panel : NULL;
 }
 
+bool was_hbm = false;
+extern bool HBM_flag;
 static void sde_connector_pre_update_fod_hbm(struct sde_connector *c_conn)
 {
 	struct dsi_panel *panel;
+	struct msm_drm_notifier notifier_data;
+	int blank;
 	int level = 0;
 	bool status;
 
@@ -657,23 +667,40 @@ static void sde_connector_pre_update_fod_hbm(struct sde_connector *c_conn)
 		return;
 
 	if (status) {
+		blank = 1;
 		level = 5;
                 devfreq_boost_kick_max(DEVFREQ_CPU_LLCC_DDR_BW, 500);
+		if (panel->bl_config.bl_level > 1023 || HBM_flag == true)
+			was_hbm = true;
+		else
+			was_hbm = false;
+
 		dsi_panel_set_nolp(panel);
-		if (panel->cur_mode->timing.refresh_rate < 90
+		if ((panel->cur_mode->timing.refresh_rate < 90
 			|| panel->hw_type == DSI_PANEL_SAMSUNG_SOFEF03F_M)
+			&& !was_hbm)
 			sde_encoder_wait_for_event(c_conn->encoder,
 					MSM_ENC_VBLANK);
+	} else {
+		blank = 0;
 	}
-	dsi_panel_set_hbm_mode(panel, level);
+	if (!was_hbm) {
+		dsi_panel_set_hbm_mode(panel, level);
 
-	if (!status && panel->cur_mode->timing.refresh_rate < 90)
-		sde_encoder_wait_for_event(c_conn->encoder,
-				MSM_ENC_VBLANK);
+		if (!status && panel->cur_mode->timing.refresh_rate < 90)
+			sde_encoder_wait_for_event(c_conn->encoder,
+					MSM_ENC_VBLANK);
+	} else if (was_hbm && !status) {
+		was_hbm = false;
+	}
 
 	dsi_panel_set_fod_ui(panel, status);
-	if (!status)
+	if (!status && !was_hbm)
 		_sde_connector_update_bl_scale(c_conn);
+
+	notifier_data.data = &blank;
+	notifier_data.id = connector_state_crtc_index;
+	msm_drm_notifier_call_chain(MSM_DRM_ONSCREENFINGERPRINT_EVENT, &notifier_data);
 }
 
 int sde_connector_pre_kickoff(struct drm_connector *connector)
