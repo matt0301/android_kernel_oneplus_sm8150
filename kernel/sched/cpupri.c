@@ -93,7 +93,7 @@ int cpupri_find(struct cpupri *cp, struct task_struct *p,
 {
 	int idx = 0;
 	int task_pri = convert_prio(p->prio);
-	bool drop_nopreempts = task_pri <= MAX_RT_PRIO + 1;
+	bool drop_nopreempts = task_pri <= MAX_RT_PRIO;
 
 	BUG_ON(task_pri >= CPUPRI_NR_PRIORITIES);
 
@@ -128,11 +128,11 @@ retry:
 		if (skip)
 			continue;
 
-		if (cpumask_any_and(p->cpus_ptr, vec->mask) >= nr_cpu_ids)
+		if (cpumask_any_and(&p->cpus_allowed, vec->mask) >= nr_cpu_ids)
 			continue;
 
 		if (lowest_mask) {
-			cpumask_and(lowest_mask, p->cpus_ptr, vec->mask);
+			cpumask_and(lowest_mask, &p->cpus_allowed, vec->mask);
 			cpumask_andnot(lowest_mask, lowest_mask,
 				       cpu_isolated_mask);
 			if (drop_nopreempts)

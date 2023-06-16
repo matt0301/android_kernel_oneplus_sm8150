@@ -274,6 +274,11 @@ struct fg_dt_props {
 	int	slope_limit_coeffs[SLOPE_LIMIT_NUM_COEFFS];
 };
 
+struct fg_saved_data {
+	union power_supply_propval val;
+	unsigned long last_req_expires;
+};
+
 struct fg_gen4_chip {
 	struct fg_dev		fg;
 	struct fg_dt_props	dt;
@@ -333,6 +338,7 @@ struct fg_gen4_chip {
 	bool			vbatt_low;
 	bool			soc_scale_mode;
 	bool			chg_term_good;
+	struct fg_saved_data	saved_data[POWER_SUPPLY_PROP_MAX];
 };
 
 struct bias_config {
@@ -975,21 +981,21 @@ static int fg_gen4_get_prop_capacity_raw(struct fg_gen4_chip *chip, int *val)
 		return rc;
 	}
 
-	if (!is_input_present(fg)) {
-		rc = fg_gen4_get_prop_capacity(fg, val);
-		if (!rc)
-			*val = *val * 100;
-		return rc;
-	}
-
 	rc = fg_get_sram_prop(&chip->fg, FG_SRAM_MONOTONIC_SOC, val);
 	if (rc < 0) {
 		pr_debug("Error in getting MONOTONIC_SOC, rc=%d\n", rc);
 		return rc;
 	}
 
-	/* Show it in centi-percentage */
-	*val = (*val * 10000) / 0xFFFF;
+	return 0;
+}
+
+static int fg_gen4_get_prop_capacity_raw_max(struct fg_gen4_chip *chip, int *val)
+{
+	if (chip->dt.soc_hi_res)
+		*val = 65535;
+	else
+		*val = FULL_SOC_RAW;
 
 	return 0;
 }
@@ -1585,7 +1591,7 @@ static int fg_gen4_set_ki_coeff_dischg(struct fg_dev *fg, int ki_coeff_low,
 	return 0;
 }
 
-#define KI_COEFF_LOW_DISCHG_DEFAULT	367
+#define KI_COEFF_LOW_DISCHG_DEFAULT	122
 #define KI_COEFF_MED_DISCHG_DEFAULT	62
 #define KI_COEFF_HI_DISCHG_DEFAULT	0
 static int fg_gen4_adjust_ki_coeff_dischg(struct fg_dev *fg)
@@ -4349,6 +4355,8 @@ static struct kernel_param_ops fg_esr_cal_ops = {
 
 module_param_cb(esr_fast_cal_en, &fg_esr_cal_ops, &fg_esr_fast_cal_en, 0644);
 
+#define FG_RATE_LIM_MS (5 * MSEC_PER_SEC)
+
 /* All power supply functions here */
 
 static int fg_psy_get_property(struct power_supply *psy,
@@ -4357,24 +4365,68 @@ static int fg_psy_get_property(struct power_supply *psy,
 {
 	struct fg_gen4_chip *chip = power_supply_get_drvdata(psy);
 	struct fg_dev *fg = &chip->fg;
+	struct fg_saved_data *sd = chip->saved_data + psp;
+	union power_supply_propval typec_sts = { .intval = -1 };
 	int rc = 0, val;
 	int64_t temp;
 
 	switch (psp) {
+	case POWER_SUPPLY_PROP_RESISTANCE_ID:
+	case POWER_SUPPLY_PROP_CHARGE_NOW:
+	case POWER_SUPPLY_PROP_CHARGE_FULL:
+	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
+	case POWER_SUPPLY_PROP_SOC_REPORTING_READY:
+	case POWER_SUPPLY_PROP_DEBUG_BATTERY:
+	case POWER_SUPPLY_PROP_ESR_ACTUAL:
+	case POWER_SUPPLY_PROP_ESR_NOMINAL:
+	case POWER_SUPPLY_PROP_SOH:
+	case POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN:
+	case POWER_SUPPLY_PROP_CLEAR_SOH:
+	case POWER_SUPPLY_PROP_CC_STEP:
+	case POWER_SUPPLY_PROP_CC_STEP_SEL:
+	case POWER_SUPPLY_PROP_BATT_AGE_LEVEL:
+	case POWER_SUPPLY_PROP_SCALE_MODE_EN:
+	case POWER_SUPPLY_PROP_CALIBRATE:
+		/* These props don't require a fg query; don't ratelimit them */
+		break;
+	default:
+		if (!sd->last_req_expires) {
+			break;
+		}
+
+		if (usb_psy_initialized(fg)) {
+			rc = power_supply_get_property(fg->usb_psy,
+				POWER_SUPPLY_PROP_TYPEC_MODE, &typec_sts);
+			if (rc < 0) {
+				pr_err("Couldn't read usb present prop rc=%d\n", rc);
+				return -ENODATA;
+			}
+		}
+
+		if (typec_sts.intval == POWER_SUPPLY_TYPEC_NONE &&
+			time_before(jiffies, sd->last_req_expires)) {
+			*pval = sd->val;
+			return 0;
+		}
+		break;
+	}
+
+	switch (psp) {
 	case POWER_SUPPLY_PROP_CAPACITY:
-		if (!get_extern_fg_regist_done())
-				pval->intval = get_prop_pre_shutdown_soc();
-		else if (fg->use_external_fg && external_fg
-					&& external_fg->get_battery_soc)
+		if (fg->use_external_fg && external_fg
+			&& external_fg->get_battery_soc)
 			pval->intval = external_fg->get_battery_soc();
 		else
-			pval->intval = 50;
+			rc = fg_gen4_get_prop_capacity(fg, &pval->intval);
 		break;
 	case POWER_SUPPLY_PROP_REAL_CAPACITY:
 		rc = fg_gen4_get_prop_real_capacity(fg, &pval->intval);
 		break;
 	case POWER_SUPPLY_PROP_CAPACITY_RAW:
 		rc = fg_gen4_get_prop_capacity_raw(chip, &pval->intval);
+		break;
+	case POWER_SUPPLY_PROP_CAPACITY_RAW_MAX:
+		rc = fg_gen4_get_prop_capacity_raw_max(chip, &pval->intval);
 		break;
 	case POWER_SUPPLY_PROP_CC_SOC:
 		rc = fg_get_sram_prop(&chip->fg, FG_SRAM_CC_SOC, &val);
@@ -4567,6 +4619,9 @@ static int fg_psy_get_property(struct power_supply *psy,
 		break;
 	}
 
+	sd->val = *pval;
+	sd->last_req_expires = jiffies + msecs_to_jiffies(FG_RATE_LIM_MS);
+
 	if (rc < 0)
 		return -ENODATA;
 
@@ -4697,6 +4752,7 @@ static enum power_supply_property fg_psy_props[] = {
 	POWER_SUPPLY_PROP_CAPACITY,
 	POWER_SUPPLY_PROP_REAL_CAPACITY,
 	POWER_SUPPLY_PROP_CAPACITY_RAW,
+	POWER_SUPPLY_PROP_CAPACITY_RAW_MAX,
 	POWER_SUPPLY_PROP_CC_SOC,
 	POWER_SUPPLY_PROP_TEMP,
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
@@ -4781,7 +4837,7 @@ static int fg_awake_cb(struct votable *votable, void *data, int awake,
 	struct fg_dev *fg = data;
 
 	if (awake)
-		pm_wakeup_event(fg->dev, 500);
+		pm_stay_awake(fg->dev);
 	else
 		pm_relax(fg->dev);
 
@@ -5530,7 +5586,7 @@ static int fg_parse_ki_coefficients(struct fg_dev *fg)
 		}
 	}
 
-	chip->dt.ki_coeff_low_chg = 184;
+	chip->dt.ki_coeff_low_chg = 183;
 	of_property_read_u32(node, "qcom,ki-coeff-low-chg",
 		&chip->dt.ki_coeff_low_chg);
 
@@ -5542,11 +5598,11 @@ static int fg_parse_ki_coefficients(struct fg_dev *fg)
 	of_property_read_u32(node, "qcom,ki-coeff-hi-chg",
 		&chip->dt.ki_coeff_hi_chg);
 
-	chip->dt.ki_coeff_lo_med_chg_thr_ma = 500;
+	chip->dt.ki_coeff_lo_med_chg_thr_ma = 1000;
 	of_property_read_u32(node, "qcom,ki-coeff-chg-low-med-thresh-ma",
 		&chip->dt.ki_coeff_lo_med_chg_thr_ma);
 
-	chip->dt.ki_coeff_med_hi_chg_thr_ma = 1000;
+	chip->dt.ki_coeff_med_hi_chg_thr_ma = 1500;
 	of_property_read_u32(node, "qcom,ki-coeff-chg-med-hi-thresh-ma",
 		&chip->dt.ki_coeff_med_hi_chg_thr_ma);
 
@@ -6063,7 +6119,7 @@ static int fg_gen4_parse_dt(struct fg_gen4_chip *chip)
 					"qcom,five-pin-battery");
 	chip->dt.multi_profile_load = of_property_read_bool(node,
 					"qcom,multi-profile-load");
-	chip->dt.soc_hi_res = of_property_read_bool(node, "qcom,soc-hi-res");
+	chip->dt.soc_hi_res = true;
 
 	chip->dt.sys_min_volt_mv = DEFAULT_SYS_MIN_VOLT_MV;
 	of_property_read_u32(node, "qcom,fg-sys-min-voltage",

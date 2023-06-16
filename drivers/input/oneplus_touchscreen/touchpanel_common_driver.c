@@ -777,6 +777,10 @@ static void tp_work_func(struct touchpanel_data *ts)
 		TPD_INFO("not support ts_ops->trigger_reason callback\n");
 		return;
 	}
+
+	pm_qos_update_request(&ts->pm_touch_req, 100);
+	pm_qos_update_request(&ts->pm_i2c_req, 100);
+
 	/*
 	 *  trigger_reason:this callback determine which trigger reason should be
 	 *  The value returned has some policy!
@@ -808,6 +812,9 @@ static void tp_work_func(struct touchpanel_data *ts)
 	} else {
 		TPD_DEBUG("unknown irq trigger reason\n");
 	}
+
+	pm_qos_update_request(&ts->pm_i2c_req, PM_QOS_DEFAULT_VALUE);
+	pm_qos_update_request(&ts->pm_touch_req, PM_QOS_DEFAULT_VALUE);
 }
 
 static void tp_work_func_unlock(struct touchpanel_data *ts)
@@ -2888,6 +2895,17 @@ static int tp_register_irq_func(struct touchpanel_data *ts)
 {
 	int ret = 0;
 
+	ts->pm_i2c_req.type = PM_QOS_REQ_AFFINE_IRQ;
+	ts->pm_i2c_req.irq = geni_i2c_get_adap_irq(ts->client);
+	irq_set_perf_affinity(ts->pm_i2c_req.irq, IRQF_PERF_AFFINE);
+	pm_qos_add_request(&ts->pm_i2c_req, PM_QOS_CPU_DMA_LATENCY,
+			   PM_QOS_DEFAULT_VALUE);
+
+	ts->pm_touch_req.type = PM_QOS_REQ_AFFINE_IRQ;
+	ts->pm_touch_req.irq = ts->irq;
+	pm_qos_add_request(&ts->pm_touch_req, PM_QOS_CPU_DMA_LATENCY,
+			   PM_QOS_DEFAULT_VALUE);
+
 #ifdef TPD_USE_EINT
 	if (gpio_is_valid(ts->hw_res.irq_gpio)) {
 		TPD_DEBUG("%s, irq_gpio is %d, ts->irq is %d\n", __func__,
@@ -2895,13 +2913,15 @@ static int tp_register_irq_func(struct touchpanel_data *ts)
 		ret =
 		    request_threaded_irq(ts->irq, NULL, tp_irq_thread_fn,
 					 ts->irq_flags | IRQF_ONESHOT |
-					 IRQF_PRIME_AFFINE, TPD_DEVICE, ts);
+					 IRQF_PERF_AFFINE, TPD_DEVICE, ts);
 		if (ret < 0) {
 			TPD_INFO("%s request_threaded_irq ret is %d\n",
 				 __func__, ret);
+			goto err_irq;
 		}
 	} else {
 		TPD_INFO("%s:no valid irq\n", __func__);
+		goto err_irq;
 	}
 #else
 	hrtimer_init(&ts->timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
@@ -2909,7 +2929,20 @@ static int tp_register_irq_func(struct touchpanel_data *ts)
 	hrtimer_start(&ts->timer, ktime_set(3, 0), HRTIMER_MODE_REL);
 #endif
 
+	return 0;
+
+err_irq:
+	pm_qos_remove_request(&ts->pm_touch_req);
+	pm_qos_remove_request(&ts->pm_i2c_req);
+
 	return ret;
+}
+
+static void tp_unregister_irq_func(struct touchpanel_data *ts)
+{
+	pm_qos_remove_request(&ts->pm_touch_req);
+	pm_qos_remove_request(&ts->pm_i2c_req);
+	free_irq(ts->irq, ts);
 }
 
 static void tp_util_get_vendor(struct touchpanel_data *ts,
@@ -3232,7 +3265,7 @@ int register_common_touch_device(struct touchpanel_data *pdata)
 	return 0;
 
  threaded_irq_free:
-	free_irq(ts->irq, ts);
+	tp_unregister_irq_func(ts);
 
  manu_info_alloc_err:
 	kfree(ts->panel_data.manufacture_info.version);
@@ -3396,7 +3429,7 @@ static void tp_resume(struct device *dev)
 		goto NO_NEED_RESUME;
 
 	//free irq at first
-	free_irq(ts->irq, ts);
+	tp_unregister_irq_func(ts);
 
 	if (ts->ts_ops->reinit_device) {
 		ts->ts_ops->reinit_device(ts->chip_data);

@@ -96,6 +96,7 @@
 #include <linux/scs.h>
 #include <linux/simple_lmk.h>
 #include <linux/devfreq_boost.h>
+#include <linux/cpu_input_boost.h>
 
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -573,8 +574,7 @@ static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
 #ifdef CONFIG_CC_STACKPROTECTOR
 	tsk->stack_canary = get_random_canary();
 #endif
-	if (orig->cpus_ptr == &orig->cpus_mask)
-		tsk->cpus_ptr = &tsk->cpus_mask;
+
 	/*
 	 * One for us, one for whoever does the "release_task()" (usually
 	 * parent)
@@ -2121,6 +2121,7 @@ static __latent_entropy struct task_struct *copy_process(
 	write_unlock_irq(&tasklist_lock);
 
 	proc_fork_connector(p);
+	sched_post_fork(p);
 	cgroup_post_fork(p);
 	cgroup_threadgroup_change_end(current);
 	perf_event_fork(p);
@@ -2175,7 +2176,6 @@ bad_fork_cleanup_perf:
 	perf_event_free_task(p);
 bad_fork_cleanup_policy:
 	lockdep_free_task(p);
-	free_task_load_ptrs(p);
 #ifdef CONFIG_NUMA
 	mpol_put(p->mempolicy);
 bad_fork_cleanup_threadgroup_lock:
@@ -2232,9 +2232,12 @@ long _do_fork(unsigned long clone_flags,
 	int trace = 0;
 	long nr;
 
-	/* Boost DDR bus to the max for 50 ms when userspace launches an app */
-	if (task_is_zygote(current))
-		devfreq_boost_kick_max(DEVFREQ_CPU_LLCC_DDR_BW, 50);
+	/* Boost DDR bus to the max for 500 ms when userspace launches an app */
+	if (task_is_zygote(current)) {
+                cpu_input_boost_kick_max(500, false);
+                devfreq_boost_kick_max(DEVFREQ_MSM_CPUBW, 500, true);
+                devfreq_boost_kick_max(DEVFREQ_MSM_LLCCBW, 500, true);
+	}
 
 	/*
 	 * Determine whether and which event to report to ptracer.  When

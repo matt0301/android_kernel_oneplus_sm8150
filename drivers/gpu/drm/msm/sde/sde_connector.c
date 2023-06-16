@@ -20,6 +20,7 @@
 #include <linux/backlight.h>
 #include <linux/string.h>
 #include <linux/devfreq_boost.h>
+#include <linux/cpu_input_boost.h>
 #include <linux/msm_drm_notify.h>
 #include "dsi_drm.h"
 #include "dsi_display.h"
@@ -100,9 +101,14 @@ static int sde_backlight_device_update_status(struct backlight_device *bd)
 		bl_lvl = 1;
 
 	//Hack because 1024-2047 has different issues on different devices
-	//Only 7T is capable of using this range, however we manual set HBM
-	if (bl_lvl > 1023)
-		bl_lvl = 2047;
+	//Only 7T is capable of partially using this range.
+	if (display->panel->hw_type == DSI_PANEL_SAMSUNG_SOFEF03F_M) {
+		if (bl_lvl > 1023 && bl_lvl < 1600)
+			bl_lvl = 1600;
+	} else {
+		if (bl_lvl > 1023)
+			bl_lvl = 2047;
+	}
 
 	if (!c_conn->allow_bl_update) {
 		c_conn->unset_bl_level = bl_lvl;
@@ -669,7 +675,10 @@ static void sde_connector_pre_update_fod_hbm(struct sde_connector *c_conn)
 	if (status) {
 		blank = 1;
 		level = 5;
-                devfreq_boost_kick_max(DEVFREQ_CPU_LLCC_DDR_BW, 500);
+                cpu_input_boost_kick_max(1200, true);
+		devfreq_boost_kick_max(DEVFREQ_MSM_CPUBW, 1200, true);
+		devfreq_boost_kick_max(DEVFREQ_MSM_LLCCBW, 1200, true);
+
 		if (panel->bl_config.bl_level > 1023 || HBM_flag == true)
 			was_hbm = true;
 		else

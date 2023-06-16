@@ -4,13 +4,22 @@
 KNAME="NeptuneKernel"
 MIN_HEAD=$(git rev-parse HEAD)
 VERSION="$(cat version)-$(date +%m.%d.%y)-$(echo ${MIN_HEAD:0:8})"
-ZIPNAME="${KNAME}-$(cat version)-$(echo $(date +%m.%d.%y))"
+if [[ "${1}" == "k" ]] ; then
+	ZIPNAME="${KNAME}-$(cat version)-KSu-$(echo $(date +%d.%m.%Y-%H%M))"
+else
+	ZIPNAME="${KNAME}-$(cat version)-$(echo $(date +%d.%m.%Y-%H%M))"
+fi
 
 export LOCALVERSION="-${KNAME}-$(echo "${VERSION}")"
 
 # Never dirty compile
-if [[ "${1}" != "skip" ]] ; then
-	./clean.sh
+./clean.sh
+
+# Build with kernel SU
+if [[ "${1}" == "k" ]] ; then
+	echo "Building with Kernel SU"
+	patch -p1 < kernelsu.patch
+	curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
 fi
 
 # Let's build
@@ -36,6 +45,8 @@ if [ -e arch/arm64/boot/Image.gz ] ; then
 	cd ..
 	ls -al $ZIPNAME.zip
 fi
+
+rm -rf KernelSU
 
 # Show compilation time
 END=$(date +"%s")
