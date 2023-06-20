@@ -848,16 +848,16 @@ int blk_queue_enter(struct request_queue *q, unsigned int op)
 {
 	while (true) {
 
-		rcu_read_lock_sched();
+		rcu_read_lock();
 		if (__percpu_ref_tryget_live(&q->q_usage_counter)) {
 			if (likely((op & REQ_PREEMPT) ||
 					!blk_queue_preempt_only(q))) {
-				rcu_read_unlock_sched();
+				rcu_read_unlock();
 				return 0;
 			} else
 				percpu_ref_put(&q->q_usage_counter);
 		}
-		rcu_read_unlock_sched();
+		rcu_read_unlock();
 
 		if (op & REQ_NOWAIT)
 			return -EBUSY;
@@ -3457,7 +3457,7 @@ static void queue_unplugged(struct request_queue *q, unsigned int depth,
 		blk_run_queue_async(q);
 	else
 		__blk_run_queue(q);
-	spin_unlock(q->queue_lock);
+	spin_unlock_irq(q->queue_lock);
 }
 
 static void flush_plug_callbacks(struct blk_plug *plug, bool from_schedule)
@@ -3505,7 +3505,6 @@ EXPORT_SYMBOL(blk_check_plugged);
 void blk_flush_plug_list(struct blk_plug *plug, bool from_schedule)
 {
 	struct request_queue *q;
-	unsigned long flags;
 	struct request *rq;
 	LIST_HEAD(list);
 	unsigned int depth;
@@ -3525,11 +3524,6 @@ void blk_flush_plug_list(struct blk_plug *plug, bool from_schedule)
 	q = NULL;
 	depth = 0;
 
-	/*
-	 * Save and disable interrupts here, to avoid doing it for every
-	 * queue lock we have to take.
-	 */
-	local_irq_save(flags);
 	while (!list_empty(&list)) {
 		rq = list_entry_rq(list.next);
 		list_del_init(&rq->queuelist);
@@ -3542,7 +3536,7 @@ void blk_flush_plug_list(struct blk_plug *plug, bool from_schedule)
 				queue_unplugged(q, depth, from_schedule);
 			q = rq->q;
 			depth = 0;
-			spin_lock(q->queue_lock);
+			spin_lock_irq(q->queue_lock);
 		}
 
 		/*
@@ -3569,8 +3563,6 @@ void blk_flush_plug_list(struct blk_plug *plug, bool from_schedule)
 	 */
 	if (q)
 		queue_unplugged(q, depth, from_schedule);
-
-	local_irq_restore(flags);
 }
 
 void blk_finish_plug(struct blk_plug *plug)
@@ -3809,76 +3801,41 @@ int __init blk_dev_init(void)
  * TODO : If necessary, we can make the histograms per-cpu and aggregate
  * them when printing them out.
  */
-void
-blk_zero_latency_hist(struct io_latency_state *s)
-{
-	memset(s->latency_y_axis_read, 0,
-	       sizeof(s->latency_y_axis_read));
-	memset(s->latency_y_axis_write, 0,
-	       sizeof(s->latency_y_axis_write));
-	s->latency_reads_elems = 0;
-	s->latency_writes_elems = 0;
-}
-EXPORT_SYMBOL(blk_zero_latency_hist);
-
 ssize_t
-blk_latency_hist_show(struct io_latency_state *s, char *buf)
+blk_latency_hist_show(char *name, struct io_latency_state *s, char *buf,
+		int buf_size)
 {
 	int i;
 	int bytes_written = 0;
 	u_int64_t num_elem, elem;
 	int pct;
+	u_int64_t average;
 
-	num_elem = s->latency_reads_elems;
+	num_elem = s->latency_elems;
 	if (num_elem > 0) {
+		average = div64_u64(s->latency_sum, s->latency_elems);
 		bytes_written += scnprintf(buf + bytes_written,
-			   PAGE_SIZE - bytes_written,
-			   "IO svc_time Read Latency Histogram (n = %llu):\n",
-			   num_elem);
-		for (i = 0;
-		     i < ARRAY_SIZE(latency_x_axis_us);
-		     i++) {
-			elem = s->latency_y_axis_read[i];
+			buf_size - bytes_written, "IO svc_time %s Latency"
+			" Histogram (n = %llu, average = %llu):\n", name,
+			num_elem, average);
+		for (i = 0; i < ARRAY_SIZE(latency_x_axis_us); i++) {
+			elem = s->latency_y_axis[i];
 			pct = div64_u64(elem * 100, num_elem);
 			bytes_written += scnprintf(buf + bytes_written,
-						   PAGE_SIZE - bytes_written,
-						   "\t< %5lluus%15llu%15d%%\n",
-						   latency_x_axis_us[i],
-						   elem, pct);
+					PAGE_SIZE - bytes_written,
+					"\t< %6lluus%15llu%15d%%\n",
+					latency_x_axis_us[i],
+					elem, pct);
 		}
 		/* Last element in y-axis table is overflow */
-		elem = s->latency_y_axis_read[i];
+		elem = s->latency_y_axis[i];
 		pct = div64_u64(elem * 100, num_elem);
 		bytes_written += scnprintf(buf + bytes_written,
-					   PAGE_SIZE - bytes_written,
-					   "\t> %5dms%15llu%15d%%\n", 10,
-					   elem, pct);
+				PAGE_SIZE - bytes_written,
+				"\t>=%6lluus%15llu%15d%%\n",
+				latency_x_axis_us[i - 1], elem, pct);
 	}
-	num_elem = s->latency_writes_elems;
-	if (num_elem > 0) {
-		bytes_written += scnprintf(buf + bytes_written,
-			   PAGE_SIZE - bytes_written,
-			   "IO svc_time Write Latency Histogram (n = %llu):\n",
-			   num_elem);
-		for (i = 0;
-		     i < ARRAY_SIZE(latency_x_axis_us);
-		     i++) {
-			elem = s->latency_y_axis_write[i];
-			pct = div64_u64(elem * 100, num_elem);
-			bytes_written += scnprintf(buf + bytes_written,
-						   PAGE_SIZE - bytes_written,
-						   "\t< %5lluus%15llu%15d%%\n",
-						   latency_x_axis_us[i],
-						   elem, pct);
-		}
-		/* Last element in y-axis table is overflow */
-		elem = s->latency_y_axis_write[i];
-		pct = div64_u64(elem * 100, num_elem);
-		bytes_written += scnprintf(buf + bytes_written,
-					   PAGE_SIZE - bytes_written,
-					   "\t> %5dms%15llu%15d%%\n", 10,
-					   elem, pct);
-	}
+
 	return bytes_written;
 }
 EXPORT_SYMBOL(blk_latency_hist_show);
