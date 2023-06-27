@@ -84,11 +84,8 @@ static int fb_notifier_callback(struct notifier_block *self,
 #endif
 
 static void tp_touch_release(struct touchpanel_data *ts);
-static void tp_btnkey_release(struct touchpanel_data *ts);
 static void tp_fw_update_work(struct work_struct *work);
 static void tp_work_func(struct touchpanel_data *ts);
-static void input_report_key_reduce(struct input_dev *dev,
-				unsigned int code, int value);
 __attribute__ ((weak))
 int request_firmware_select(const struct firmware **firmware_p,
 			    const char *name, struct device *device)
@@ -131,7 +128,7 @@ static int __init get_cmdlinelcd_id(char *str)
 
 __setup("panel_type=", get_cmdlinelcd_id);
 
-int check_touchirq_triggerd(void)
+int inline check_touchirq_triggerd(void)
 {
 	int value;
 
@@ -157,7 +154,7 @@ int check_touchirq_triggerd(void)
  * switch work mode based on current params(gesture_enable, limit_enable, glove_enable)
  * Do not care the result: Return void type
  */
-static void operate_mode_switch(struct touchpanel_data *ts)
+static inline void operate_mode_switch(struct touchpanel_data *ts)
 {
 	if (!ts->ts_ops->mode_switch) {
 		TPD_INFO("not support ts_ops->mode_switch callback\n");
@@ -207,7 +204,7 @@ static void operate_mode_switch(struct touchpanel_data *ts)
 	}
 }
 
-static void tp_touch_down(struct touchpanel_data *ts, struct point_info points,
+static inline void tp_touch_down(struct touchpanel_data *ts, struct point_info points,
 			  int touch_report_num, int id)
 {
 	static int last_width_major;
@@ -259,7 +256,7 @@ static void tp_touch_down(struct touchpanel_data *ts, struct point_info points,
 #endif
 }
 
-static void tp_touch_up(struct touchpanel_data *ts)
+static inline void tp_touch_up(struct touchpanel_data *ts)
 {
 	if (ts->input_dev == NULL)
 		return;
@@ -281,7 +278,6 @@ static void tp_exception_handle(struct touchpanel_data *ts)
 	ts->ts_ops->reset(ts->chip_data);	// after reset, all registers set to default
 	operate_mode_switch(ts);
 
-	tp_btnkey_release(ts);
 	tp_touch_release(ts);
 }
 
@@ -301,11 +297,10 @@ static void tp_fw_auto_reset_handle(struct touchpanel_data *ts)
 
 	operate_mode_switch(ts);
 
-	tp_btnkey_release(ts);
 	tp_touch_release(ts);
 }
 
-static void tp_geture_info_transform(struct gesture_info *gesture,
+static inline void tp_geture_info_transform(struct gesture_info *gesture,
 				     struct resolution_info *resolution_info)
 {
 	gesture->Point_start.x =
@@ -346,7 +341,7 @@ static void tp_geture_info_transform(struct gesture_info *gesture,
 	    (resolution_info->max_y);
 }
 
-static int sec_double_tap(struct gesture_info *gesture)
+static inline int sec_double_tap(struct gesture_info *gesture)
 {
 	uint32_t timeuse = 0;
 
@@ -382,9 +377,9 @@ static int sec_double_tap(struct gesture_info *gesture)
 
 }
 
-static void tp_gesture_handle(struct touchpanel_data *ts)
+static inline void tp_gesture_handle(struct touchpanel_data *ts)
 {
-	struct gesture_info gesture_info_temp;
+	struct gesture_info gesture_info_temp = { 0, };
 	bool enabled = false;
 	int key = -1;
 
@@ -393,7 +388,6 @@ static void tp_gesture_handle(struct touchpanel_data *ts)
 		return;
 	}
 
-	memset(&gesture_info_temp, 0, sizeof(struct gesture_info));
 	ts->ts_ops->get_gesture_info(ts->chip_data, &gesture_info_temp);
 	tp_geture_info_transform(&gesture_info_temp, &ts->resolution_info);
 	ts->double_tap_pressed = (sec_double_tap(&gesture_info_temp) == 1) ? 1 : 0;
@@ -490,10 +484,9 @@ void tp_touch_btnkey_release(void)
 	}
 
 	tp_touch_release(ts);
-	tp_btnkey_release(ts);
 }
 
-static void tp_touch_release(struct touchpanel_data *ts)
+static inline void tp_touch_release(struct touchpanel_data *ts)
 {
 	int i = 0;
 
@@ -518,13 +511,12 @@ static void tp_touch_release(struct touchpanel_data *ts)
 	ts->corner_delay_up = -1;
 }
 
-static void tp_touch_handle(struct touchpanel_data *ts)
+static inline void tp_touch_handle(struct touchpanel_data *ts)
 {
 	int i = 0;
 	uint8_t finger_num = 0, touch_near_edge = 0;
 	int obj_attention = 0;
-	struct point_info points[10];
-	struct corner_info corner[4];
+	struct point_info points[10] = {0, };
 	static struct point_info last_point = {.x = 0,.y = 0 };
 	static int touch_report_num = 0;
 	struct msm_drm_notifier notifier_data;
@@ -537,8 +529,6 @@ static void tp_touch_handle(struct touchpanel_data *ts)
 		return;
 	}
 
-	memset(points, 0, sizeof(points));
-	memset(corner, 0, sizeof(corner));
 	if (ts->reject_point) {	//sensor will reject point when call mode.
 		if (ts->touch_count) {
 #ifdef TYPE_B_PROTOCOL
@@ -649,47 +639,7 @@ static void tp_touch_handle(struct touchpanel_data *ts)
 	ts->touch_count = finger_num;
 }
 
-static void tp_btnkey_release(struct touchpanel_data *ts)
-{
-	if (CHK_BIT(ts->vk_bitmap, BIT_MENU))
-		input_report_key_reduce(ts->kpd_input_dev, KEY_MENU, 0);
-	if (CHK_BIT(ts->vk_bitmap, BIT_HOME))
-		input_report_key_reduce(ts->kpd_input_dev, KEY_HOMEPAGE, 0);
-	if (CHK_BIT(ts->vk_bitmap, BIT_BACK))
-		input_report_key_reduce(ts->kpd_input_dev, KEY_BACK, 0);
-	input_sync(ts->kpd_input_dev);
-}
-
-static void tp_btnkey_handle(struct touchpanel_data *ts)
-{
-	u8 touch_state = 0;
-
-	if (ts->vk_type != TYPE_AREA_SEPRATE) {
-		TPD_DEBUG
-		    ("TP vk_type not proper, checktouchpanel, button-type\n");
-
-		return;
-	}
-	if (!ts->ts_ops->get_keycode) {
-		TPD_INFO("not support ts->ts_ops->get_keycode callback\n");
-
-		return;
-	}
-	touch_state = ts->ts_ops->get_keycode(ts->chip_data);
-
-	if (CHK_BIT(ts->vk_bitmap, BIT_MENU))
-		input_report_key_reduce(ts->kpd_input_dev, KEY_MENU,
-					CHK_BIT(touch_state, BIT_MENU));
-	if (CHK_BIT(ts->vk_bitmap, BIT_HOME))
-		input_report_key_reduce(ts->kpd_input_dev, KEY_HOMEPAGE,
-					CHK_BIT(touch_state, BIT_HOME));
-	if (CHK_BIT(ts->vk_bitmap, BIT_BACK))
-		input_report_key_reduce(ts->kpd_input_dev, KEY_BACK,
-					CHK_BIT(touch_state, BIT_BACK));
-	input_sync(ts->kpd_input_dev);
-}
-
-static void tp_config_handle(struct touchpanel_data *ts)
+static inline void tp_config_handle(struct touchpanel_data *ts)
 {
 	if (!ts->ts_ops->fw_handle) {
 		TPD_INFO("not support ts->ts_ops->fw_handle callback\n");
@@ -699,7 +649,7 @@ static void tp_config_handle(struct touchpanel_data *ts)
 	ts->ts_ops->fw_handle(ts->chip_data);
 }
 
-static void tp_face_detect_handle(struct touchpanel_data *ts)
+static inline void tp_face_detect_handle(struct touchpanel_data *ts)
 {
 	int ps_state = 0;
 
@@ -715,7 +665,7 @@ static void tp_face_detect_handle(struct touchpanel_data *ts)
 	input_sync(ps_input_dev);
 }
 
-static void tp_async_work_callback(void)
+static inline void tp_async_work_callback(void)
 {
 	struct touchpanel_data *ts = g_tp;
 
@@ -748,7 +698,7 @@ static void tp_async_work_callback(void)
 	queue_work(ts->async_workqueue, &ts->async_work);
 }
 
-static void tp_async_work_lock(struct work_struct *work)
+static inline void tp_async_work_lock(struct work_struct *work)
 {
 	struct touchpanel_data *ts =
 	    container_of(work, struct touchpanel_data, async_work);
@@ -759,7 +709,7 @@ static void tp_async_work_lock(struct work_struct *work)
 	mutex_unlock(&ts->mutex);
 }
 
-static void tp_work_common_callback(void)
+static inline void tp_work_common_callback(void)
 {
 	struct touchpanel_data *ts;
 
@@ -769,7 +719,7 @@ static void tp_work_common_callback(void)
 	tp_work_func(ts);
 }
 
-static void tp_work_func(struct touchpanel_data *ts)
+static inline void tp_work_func(struct touchpanel_data *ts)
 {
 	u8 cur_event = 0;
 
@@ -792,9 +742,6 @@ static void tp_work_func(struct touchpanel_data *ts)
 				       ts->is_suspended);
 	if (CHK_BIT(cur_event, IRQ_TOUCH) || CHK_BIT(cur_event, IRQ_BTN_KEY)
 	    || CHK_BIT(cur_event, IRQ_FACE_STATE)) {
-		if (CHK_BIT(cur_event, IRQ_BTN_KEY)) {
-			tp_btnkey_handle(ts);
-		}
 		if (CHK_BIT(cur_event, IRQ_TOUCH)) {
 			tp_touch_handle(ts);
 		}
@@ -949,7 +896,6 @@ static void tp_fw_update_work(struct work_struct *work)
 	}
 
 	tp_touch_release(ts);
-	tp_btnkey_release(ts);
 	operate_mode_switch(ts);
 
  EXIT:
@@ -987,7 +933,7 @@ static enum hrtimer_restart touchpanel_timer_func(struct hrtimer *timer)
 	return HRTIMER_NORESTART;
 }
 #else
-static irqreturn_t tp_irq_thread_fn(int irq, void *dev_id)
+static inline irqreturn_t tp_irq_thread_fn(int irq, void *dev_id)
 {
 	struct touchpanel_data *ts = (struct touchpanel_data *)dev_id;
 
@@ -1009,7 +955,7 @@ static irqreturn_t tp_irq_thread_fn(int irq, void *dev_id)
  *    gesture_enable = 1 : enable gesture when ps is far away
  *    gesture_enable = 2 : disable gesture when ps is near
  */
-static ssize_t proc_gesture_control_write(struct file *file,
+static inline ssize_t proc_gesture_control_write(struct file *file,
 					  const char __user * buffer,
 					  size_t count, loff_t * ppos)
 {
@@ -1087,7 +1033,7 @@ static ssize_t proc_gesture_control_read(struct file *file,
 	return ret;
 }
 
-static ssize_t proc_coordinate_read(struct file *file, char __user * user_buf,
+static inline ssize_t proc_coordinate_read(struct file *file, char __user * user_buf,
 				    size_t count, loff_t * ppos)
 {
 	int ret = 0;
@@ -3367,8 +3313,7 @@ static int tp_suspend(struct device *dev)
 		goto EXIT;
 	}
 
-	//step3:Release key && touch event before suspend
-	tp_btnkey_release(ts);
+	//step3:release touch event before suspend
 	tp_touch_release(ts);
 
 	//step5:ear sense support
@@ -3466,7 +3411,6 @@ static void __always_inline speedup_resume(struct work_struct *work)
 	//step1: get mutex for locking i2c acess flow
 	mutex_lock(&ts->mutex);
 
-	tp_btnkey_release(ts);
 	tp_touch_release(ts);
 
 	if (ts->int_mode == UNBANNABLE) {
@@ -3702,27 +3646,4 @@ int common_touch_data_free(struct touchpanel_data *pdata)
 
 	g_tp = NULL;
 	return 0;
-}
-
-/**
- * input_report_key_reduce - Using for report virtual key
- * @work: work struct using for this thread
- *
- * before report virtual key, detect whether touch_area has been touched
- * Do not care the result: Return void type
- */
-static void input_report_key_reduce(struct input_dev *dev,
-				unsigned int code, int value)
-{
-	if (value) {		//report Key[down]
-		if (g_tp) {
-			if (g_tp->view_area_touched == 0) {
-				input_report_key(dev, code, value);
-			} else
-				TPD_INFO
-				    ("Sorry,tp is touch down,can not report touch key\n");
-		}
-	} else {
-		input_report_key(dev, code, value);
-	}
 }

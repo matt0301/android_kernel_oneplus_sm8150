@@ -129,8 +129,7 @@ static inline void nl_data_ready(struct sk_buff *__skb)
 
 static inline int netlink_init(void)
 {
-	struct netlink_kernel_cfg netlink_cfg;
-	memset(&netlink_cfg, 0, sizeof(struct netlink_kernel_cfg));
+	struct netlink_kernel_cfg netlink_cfg = {0, };
 	netlink_cfg.groups = 0;
 	netlink_cfg.flags = 0;
 	netlink_cfg.input = nl_data_ready;
@@ -237,11 +236,6 @@ static inline void gf_enable_irq(struct gf_dev *gf_dev)
 		enable_irq(gf_dev->irq);
 		gf_dev->irq_enabled = 1;
 	}
-	gf_dev->gf_dev_req.type = PM_QOS_REQ_AFFINE_IRQ;
-	gf_dev->gf_dev_req.irq = gf_dev->irq;
-	irq_set_perf_affinity(gf_dev->gf_dev_req.irq, IRQF_PRIME_AFFINE);
-	pm_qos_add_request(&gf_dev->gf_dev_req, PM_QOS_CPU_DMA_LATENCY,
-		PM_QOS_DEFAULT_VALUE);
 }
 
 static inline void gf_disable_irq(struct gf_dev *gf_dev)
@@ -250,7 +244,6 @@ static inline void gf_disable_irq(struct gf_dev *gf_dev)
 		gf_dev->irq_enabled = 0;
 		disable_irq(gf_dev->irq);
 	}
-	pm_qos_remove_request(&gf_dev->gf_dev_req);
 }
 
 static inline irqreturn_t gf_irq(int irq, void *handle)
@@ -265,7 +258,6 @@ static inline int irq_setup(struct gf_dev *gf_dev)
 {
 	int status;
 	gf_dev->irq = gpio_to_irq(gf_dev->irq_gpio);
-	pm_qos_update_request(&gf_dev->gf_dev_req, 100);
 	status = request_threaded_irq(gf_dev->irq, NULL, gf_irq,
 			IRQF_TRIGGER_RISING | IRQF_ONESHOT |IRQF_NO_SUSPEND | IRQF_FORCE_RESUME | IRQF_PRIME_AFFINE,
 			"gf", gf_dev);
@@ -463,7 +455,6 @@ int __always_inline gf_opticalfp_irq_handler(int event)
 		return 0;
 	}
 	__pm_wakeup_event(&fp_wakelock, 2000);
-	pm_qos_update_request(&gf_dev->gf_dev_req, 100);
 	switch(event) {
 	case 1:
 	  gf_dev->udfps_pressed = 1;
