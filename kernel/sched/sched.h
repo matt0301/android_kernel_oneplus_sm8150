@@ -2819,6 +2819,9 @@ unsigned long uclamp_util_with(struct rq *rq, unsigned long util,
 		max_util = max(max_util, uclamp_eff_value(p, UCLAMP_MAX));
 	}
 
+	if (kp_active_mode() == 1)
+		min_util = 0;
+
 	/*
 	 * Since CPU's {min,max}_util clamps are MAX aggregated considering
 	 * RUNNABLE tasks with _different_ clamps, we can end up with an
