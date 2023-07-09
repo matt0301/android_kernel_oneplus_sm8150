@@ -1107,7 +1107,7 @@ static void rcu_preempt_boost_start_gp(struct rcu_node *rnp)
 {
 	switch (kp_active_mode()) {
 	case 3:
-		rnp->boost_time = jiffies + (RCU_BOOST_DELAY_JIFFIES / 2);
+		rnp->boost_time = jiffies;
 	case 1:
 		rnp->boost_time = jiffies + (RCU_BOOST_DELAY_JIFFIES * 2);
 	default:
