@@ -2688,6 +2688,8 @@ unsigned long uclamp_eff_value(struct task_struct *p, enum uclamp_id clamp_id);
  * static key is disabled.
  */
 
+extern int kp_active_mode(void);
+
 static __always_inline
 unsigned long uclamp_rq_util_with(struct rq *rq, unsigned long util,
 				  struct task_struct *p)
@@ -2705,6 +2707,9 @@ unsigned long uclamp_rq_util_with(struct rq *rq, unsigned long util,
 		min_util = max(min_util, uclamp_eff_value(p, UCLAMP_MIN));
 		max_util = max(max_util, uclamp_eff_value(p, UCLAMP_MAX));
 	}
+
+	if (kp_active_mode() == 1)
+		min_util = 0;
 
 	/*
 	 * Since CPU's {min,max}_util clamps are MAX aggregated considering
@@ -2725,8 +2730,6 @@ unsigned long uclamp_rq_util_with(struct rq *rq, unsigned long util,
 	return util;
 }
 #endif /* CONFIG_UCLAMP_TASK */
-
-extern int kp_active_mode(void);
 
 #ifdef CONFIG_UCLAMP_TASK_GROUP
 static inline bool uclamp_latency_sensitive(struct task_struct *p)
